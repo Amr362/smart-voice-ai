@@ -2,19 +2,21 @@ from flask import Blueprint, request, jsonify
 import jwt
 import datetime
 import hashlib
-import random
-import string
-from src.models.user import db, User
+import os
+import requests
+import json
+from src.models.user import User # User model now handles Supabase API calls
 
 auth_bp = Blueprint("auth", __name__)
 
-# مفتاح سري للتوقيع (في التطبيق الحقيقي يجب أن يكون في متغير بيئة)
-SECRET_KEY = "your-secret-key-here" # This should ideally come from environment variables as well
+SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "your-default-secret-key")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 def generate_token(user_id, email):
     """توليد JWT token"""
     payload = {
-        "user_id": user_id,
+        "user_id": str(user_id), # Ensure user_id is string for JWT
         "email": email,
         "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7),
     }
@@ -39,32 +41,26 @@ def register():
         password = data.get("password", "")
         name = data.get("name", "")
 
-        # التحقق من البيانات
         if not email or not password or not name:
             return jsonify({"success": False, "error": "جميع الحقول مطلوبة"}), 400
 
         if len(password) < 6:
             return jsonify({"success": False, "error": "كلمة المرور يجب أن تكون 6 أحرف على الأقل"}), 400
 
-        # التحقق من وجود المستخدم
-        existing_user = User.query.filter_by(email=email).first()
+        existing_user = User.fetch_by_email(email)
         if existing_user:
             return jsonify({"success": False, "error": "البريد الإلكتروني مستخدم بالفعل"}), 400
 
-        # إنشاء المستخدم الجديد
         hashed_password = hashlib.sha256(password.encode()).hexdigest()
         new_user = User(
             email=email,
             password=hashed_password,
             name=name,
             plan="المجاني",
-            created_at=datetime.datetime.utcnow(),
             verified=False,
         )
-        db.session.add(new_user)
-        db.session.commit()
+        new_user.save()
 
-        # توليد token
         token = generate_token(new_user.id, new_user.email)
 
         return jsonify(
@@ -72,18 +68,13 @@ def register():
                 "success": True,
                 "message": "تم إنشاء الحساب بنجاح",
                 "token": token,
-                "user": {
-                    "id": new_user.id,
-                    "email": new_user.email,
-                    "name": new_user.name,
-                    "plan": new_user.plan,
-                    "verified": new_user.verified,
-                },
+                "user": new_user.to_dict(),
             }
         )
 
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"خطأ في الاتصال بـ Supabase: {str(e)}"}), 500
     except Exception as e:
-        db.session.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
 
 @auth_bp.route("/login", methods=["POST"])
@@ -97,18 +88,15 @@ def login():
         if not email or not password:
             return jsonify({"success": False, "error": "البريد الإلكتروني وكلمة المرور مطلوبان"}), 400
 
-        # التحقق من وجود المستخدم
-        user = User.query.filter_by(email=email).first()
+        user = User.fetch_by_email(email)
         if not user:
             return jsonify({"success": False, "error": "بيانات الدخول غير صحيحة"}), 401
 
         hashed_password = hashlib.sha256(password.encode()).hexdigest()
 
-        # التحقق من كلمة المرور
         if user.password != hashed_password:
             return jsonify({"success": False, "error": "بيانات الدخول غير صحيحة"}), 401
 
-        # توليد token
         token = generate_token(user.id, user.email)
 
         return jsonify(
@@ -116,16 +104,12 @@ def login():
                 "success": True,
                 "message": "تم تسجيل الدخول بنجاح",
                 "token": token,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "name": user.name,
-                    "plan": user.plan,
-                    "verified": user.verified,
-                },
+                "user": user.to_dict(),
             }
         )
 
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"خطأ في الاتصال بـ Supabase: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -133,7 +117,6 @@ def login():
 def get_profile():
     """الحصول على بيانات المستخدم"""
     try:
-        # الحصول على token من header
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return jsonify({"success": False, "error": "Token مطلوب"}), 401
@@ -145,25 +128,15 @@ def get_profile():
             return jsonify({"success": False, "error": "Token غير صالح"}), 401
 
         user_id = payload["user_id"]
-        user = User.query.get(user_id)
+        user = User.fetch_by_id(user_id)
 
         if not user:
             return jsonify({"success": False, "error": "المستخدم غير موجود"}), 404
 
-        return jsonify(
-            {
-                "success": True,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "name": user.name,
-                    "plan": user.plan,
-                    "verified": user.verified,
-                    "created_at": user.created_at.isoformat() + "Z",
-                },
-            }
-        )
+        return jsonify({"success": True, "user": user.to_dict()})
 
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"خطأ في الاتصال بـ Supabase: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -171,7 +144,6 @@ def get_profile():
 def update_profile():
     """تحديث بيانات المستخدم"""
     try:
-        # التحقق من token
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return jsonify({"success": False, "error": "Token مطلوب"}), 401
@@ -183,7 +155,7 @@ def update_profile():
             return jsonify({"success": False, "error": "Token غير صالح"}), 401
 
         user_id = payload["user_id"]
-        user = User.query.get(user_id)
+        user = User.fetch_by_id(user_id)
 
         if not user:
             return jsonify({"success": False, "error": "المستخدم غير موجود"}), 404
@@ -193,31 +165,25 @@ def update_profile():
 
         if name:
             user.name = name
-        db.session.commit()
+        user.save()
 
         return jsonify(
             {
                 "success": True,
                 "message": "تم تحديث البيانات بنجاح",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "name": user.name,
-                    "plan": user.plan,
-                    "verified": user.verified,
-                },
+                "user": user.to_dict(),
             }
         )
 
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"خطأ في الاتصال بـ Supabase: {str(e)}"}), 500
     except Exception as e:
-        db.session.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
 
 @auth_bp.route("/change-password", methods=["POST"])
 def change_password():
     """تغيير كلمة المرور"""
     try:
-        # التحقق من token
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return jsonify({"success": False, "error": "Token مطلوب"}), 401
@@ -229,7 +195,7 @@ def change_password():
             return jsonify({"success": False, "error": "Token غير صالح"}), 401
 
         user_id = payload["user_id"]
-        user = User.query.get(user_id)
+        user = User.fetch_by_id(user_id)
 
         if not user:
             return jsonify({"success": False, "error": "المستخدم غير موجود"}), 404
@@ -249,15 +215,15 @@ def change_password():
         if user.password != current_hashed:
             return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"}), 400
 
-        # تحديث كلمة المرور
         new_hashed = hashlib.sha256(new_password.encode()).hexdigest()
         user.password = new_hashed
-        db.session.commit()
+        user.save()
 
         return jsonify({"success": True, "message": "تم تغيير كلمة المرور بنجاح"})
 
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"خطأ في الاتصال بـ Supabase: {str(e)}"}), 500
     except Exception as e:
-        db.session.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
 
 

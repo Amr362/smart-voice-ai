@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, send_from_directory
 from flask_cors import CORS
-from src.models.user import db
+# from src.models.user import db # Removed SQLAlchemy db import
 from src.routes.user import user_bp
 from src.routes.audio import audio_bp
 from src.routes.auth import auth_bp
@@ -24,13 +24,10 @@ app.register_blueprint(user_bp, url_prefix='/api')
 app.register_blueprint(audio_bp, url_prefix='/api/audio')
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 
-# Supabase PostgreSQL configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db.init_app(app)
-with app.app_context():
-    db.create_all() # This will create tables if they don't exist
+# Supabase API configuration (no direct DB connection here)
+# db.init_app(app) # Removed SQLAlchemy initialization
+# with app.app_context():
+#     db.create_all() # Removed SQLAlchemy table creation
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
