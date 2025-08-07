@@ -1,6 +1,10 @@
 import os
 import sys
-# DON'T CHANGE THIS !!!
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, send_from_directory
@@ -11,21 +15,22 @@ from src.routes.audio import audio_bp
 from src.routes.auth import auth_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
-app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'your-default-secret-key')
 
-# تمكين CORS لجميع المسارات
+# Enable CORS for all routes
 CORS(app)
 
 app.register_blueprint(user_bp, url_prefix='/api')
 app.register_blueprint(audio_bp, url_prefix='/api/audio')
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 
-# uncomment if you need to use database
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"
+# Supabase PostgreSQL configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 db.init_app(app)
 with app.app_context():
-    db.create_all()
+    db.create_all() # This will create tables if they don't exist
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -46,3 +51,5 @@ def serve(path):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
